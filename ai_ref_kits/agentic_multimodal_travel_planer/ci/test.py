@@ -345,19 +345,38 @@ def check_agent_services_up() -> None:
     _wait_for_ports(ports, timeout_s=120)
     print(f"Agent ports are up: {ports}")
 
-    query, expected_token = _router_sanity_test_case()
-    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 600)
-    query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
-
+    # Verify agent-cards for all agents
     for agent_name, cfg in _enabled_agents_from_config():
         agent_port = int(cfg["port"])
         card_base_url = f"http://127.0.0.1:{agent_port}"
         card_url = f"{card_base_url}/.well-known/agent-card.json"
         card_payload = _http_get_json(card_url)
-        print(f"{agent_name} agent-card: {json.dumps(card_payload, ensure_ascii=True)}")
+        print(
+            f"{agent_name} agent-card: "
+            f"{json.dumps(card_payload, ensure_ascii=True)}"
+        )
+        agent_url = _agent_url_from_card(card_payload)
+        print(f"{agent_name} is accessible at {agent_url}")
+
+    # Query travel_router only (it will test full stack via handoffs)
+    query, expected_token = _router_sanity_test_case()
+    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 600)
+    query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
+
+    router_cfg = None
+    for agent_name, cfg in _enabled_agents_from_config():
+        if agent_name == "travel_router":
+            router_cfg = cfg
+            break
+
+    if router_cfg:
+        agent_port = int(router_cfg["port"])
+        card_base_url = f"http://127.0.0.1:{agent_port}"
+        card_url = f"{card_base_url}/.well-known/agent-card.json"
+        card_payload = _http_get_json(card_url)
         agent_url = _agent_url_from_card(card_payload)
 
-        print(f"Querying {agent_name} at {agent_url}...", flush=True)
+        print(f"Querying travel_router at {agent_url}...", flush=True)
         last_error: RuntimeError | None = None
         response_text = ""
         for attempt in range(1, query_retries + 1):
@@ -371,23 +390,24 @@ def check_agent_services_up() -> None:
             except RuntimeError as exc:
                 last_error = exc
                 print(
-                    f"{agent_name} query attempt {attempt}/{query_retries} failed: {exc}",
+                    f"travel_router query attempt {attempt}/{query_retries} "
+                    f"failed: {exc}",
                     flush=True,
                 )
                 if attempt < query_retries:
                     time.sleep(2)
         if not response_text:
             raise RuntimeError(
-                f"{agent_name} query failed after {query_retries} attempts"
+                f"travel_router query failed after {query_retries} attempts"
             ) from last_error
-        print(f"{agent_name} response: {response_text}")
-        
-        # Only check token for travel_router since other agents have different purposes
-        if agent_name == "travel_router":
-            _assert(
-                expected_token.lower() in response_text.lower(),
-                f"{agent_name} response missing expected token '{expected_token}'.",
-            )
+        print(f"travel_router response: {response_text}")
+        _assert(
+            expected_token.lower() in response_text.lower(),
+            f"travel_router response missing expected token '{expected_token}'.",
+        )
+    else:
+        print("Warning: travel_router not found in enabled agents")
+
     print("Agent endpoint sanity passed.")
 
 
@@ -407,7 +427,7 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
         async def _ignore_event(_data: object, _event: object) -> None:
             return None
 
-        # Match start_ui.py pattern: do NOT wrap with asyncio.wait_for
+        # Match start_ui.y pattern: do NOT wrap with asyncio.wait_for
         response = await client.run(query).on("update", _ignore_event).on(
             "final_answer", _ignore_event
         )
