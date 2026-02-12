@@ -12,12 +12,8 @@ from __future__ import annotations
 import asyncio
 import argparse
 import json
-import os
 import socket
-import subprocess
 import sys
-import tempfile
-import textwrap
 import time
 import urllib.error
 import urllib.parse
@@ -29,6 +25,7 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -36,26 +33,10 @@ def _assert(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
 def _is_port_open(port: int, host: str = "localhost") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.4)
         return sock.connect_ex((host, port)) == 0
-
-
-def _env_truthy(name: str, default: str = "false") -> bool:
-    value = os.getenv(name, default).strip().lower()
-    return value in {"1", "true", "yes", "on"}
-
 
 def _http_get_json(url: str, timeout: int = 20) -> dict:
     req = urllib.request.Request(url, method="GET")
@@ -65,32 +46,6 @@ def _http_get_json(url: str, timeout: int = 20) -> dict:
             return json.loads(payload) if payload else {}
     except urllib.error.URLError as exc:
         raise RuntimeError(f"GET failed for {url}: {exc}") from exc
-
-
-def _http_post_json(url: str, body: dict, timeout: int = 60) -> dict:
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            payload = response.read().decode("utf-8")
-            return json.loads(payload) if payload else {}
-    except urllib.error.HTTPError as exc:
-        details = ""
-        try:
-            details = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            details = ""
-        suffix = f" response={details}" if details else ""
-        raise RuntimeError(
-            f"POST failed for {url}: HTTP Error {exc.code}: {exc.reason}{suffix}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"POST failed for {url}: {exc}") from exc
 
 
 def _load_yaml(path: Path) -> dict:
@@ -233,170 +188,6 @@ def check_live_llm_sanity() -> None:
     print("Live LLM sanity checks passed.")
 
 
-def _write_mock_mcp_script(path: Path) -> None:
-    content = textwrap.dedent(
-        """
-        #!/usr/bin/env python3
-        import argparse
-        from http.server import BaseHTTPRequestHandler, HTTPServer
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain")
-                self.end_headers()
-                self.wfile.write(b"ok")
-
-            def log_message(self, format, *args):
-                return
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("command", nargs="?")
-        parser.add_argument("--protocol")
-        parser.add_argument("--port", type=int, default=3000)
-        args = parser.parse_args()
-
-        server = HTTPServer(("localhost", args.port), Handler)
-        print("MCP server started", flush=True)
-        server.serve_forever()
-        """
-    ).strip()
-    path.write_text(content + "\n", encoding="utf-8")
-    path.chmod(0o755)
-
-
-def _write_mock_agent_runner(path: Path) -> None:
-    content = textwrap.dedent(
-        """
-        #!/usr/bin/env python3
-        import argparse
-        from http.server import BaseHTTPRequestHandler, HTTPServer
-        from pathlib import Path
-        import yaml
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == "/.well-known/agent-card.json":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(b'{"name":"mock-agent"}')
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain")
-                self.end_headers()
-                self.wfile.write(b"ok")
-
-            def log_message(self, format, *args):
-                return
-
-
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--agent", required=True)
-        args = parser.parse_args()
-
-        cfg_file = Path(__file__).resolve().parent.parent / "config" / "agents_config.yaml"
-        config = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
-        port = int(config[args.agent]["port"])
-
-        server = HTTPServer(("localhost", port), Handler)
-        print("Uvicorn running on mock server", flush=True)
-        server.serve_forever()
-        """
-    ).strip()
-    path.write_text(content + "\n", encoding="utf-8")
-    path.chmod(0o755)
-
-
-def check_mcp_and_agents_sanity() -> None:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-    # Imports are intentionally local so tests remain self-contained.
-    import start_agents  # pylint: disable=import-error
-    import start_mcp_servers  # pylint: disable=import-error
-
-    with tempfile.TemporaryDirectory(prefix="agentic_ci_") as temp_dir:
-        temp_root = Path(temp_dir)
-        os.chdir(temp_root)
-
-        (temp_root / "config").mkdir(parents=True, exist_ok=True)
-        (temp_root / "mcp_tools").mkdir(parents=True, exist_ok=True)
-        (temp_root / "agents").mkdir(parents=True, exist_ok=True)
-
-        mcp_cfg = {
-            "image_mcp": {
-                "script": "mcp_tools/ai_builder_mcp_image.py",
-                "mcp_port": 3330,
-            },
-            "hotel_finder": {
-                "script": "mcp_tools/ai_builder_mcp_hotel_finder.py",
-                "mcp_port": 3331,
-            },
-            "flight_finder": {
-                "script": "mcp_tools/ai_builder_mcp_flights.py",
-                "mcp_port": 3332,
-            },
-        }
-        with open(temp_root / "config" / "mcp_config.yaml", "w", encoding="utf-8") as f:
-            yaml.safe_dump(mcp_cfg, f, sort_keys=False)
-
-        for section in mcp_cfg.values():
-            _write_mock_mcp_script(temp_root / section["script"])
-
-        agent_ports = {
-            "travel_router": 9446,
-            "flight_finder": 9448,
-            "hotel_finder": 9449,
-            "image_captioning": 9447,
-        }
-        agent_cfg = {
-            name: {"port": port, "enabled": True}
-            for name, port in agent_ports.items()
-        }
-        with open(
-            temp_root / "config" / "agents_config.yaml", "w", encoding="utf-8"
-        ) as f:
-            yaml.safe_dump(agent_cfg, f, sort_keys=False)
-
-        mock_runner = temp_root / "agents" / "agent_runner.py"
-        _write_mock_agent_runner(mock_runner)
-
-        # Patch module-level paths to temporary fixtures.
-        start_mcp_servers.CONFIG_PATH = Path("config/mcp_config.yaml")
-        start_mcp_servers.LOG_DIR = Path("logs")
-        start_mcp_servers.LOG_DIR.mkdir(exist_ok=True)
-
-        start_agents.CONFIG_PATH = Path("config/agents_config.yaml")
-        start_agents.AGENT_RUNNER = Path("agents/agent_runner.py")
-        start_agents.LOG_DIR = Path("logs")
-        start_agents.LOG_DIR.mkdir(exist_ok=True)
-
-        # Start MCP servers and verify ports.
-        targets = start_mcp_servers.select_targets(start_mcp_servers.load_config())
-        started_mcp = []
-        for name, section in targets:
-            ok = start_mcp_servers.start_mcp_server(name, section)
-            _assert(ok, f"Failed to start mock MCP server: {name}")
-            started_mcp.append(name)
-        for port in [section["mcp_port"] for section in mcp_cfg.values()]:
-            _assert(_is_port_open(port), f"Mock MCP port not open: {port}")
-        print(f"MCP sanity checks passed for: {', '.join(started_mcp)}")
-
-        # Start agents and verify ports.
-        started_agents = []
-        for name, section in agent_cfg.items():
-            ok = start_agents.start_agent(name, section)
-            _assert(ok, f"Failed to start mock agent: {name}")
-            started_agents.append(name)
-        for port in agent_ports.values():
-            _assert(_is_port_open(port), f"Mock agent port not open: {port}")
-        print(f"Agent sanity checks passed for: {', '.join(started_agents)}")
-
-        # Cleanup started processes.
-        start_mcp_servers.stop_mcp_servers(targets, kill_all=False)
-        start_agents.stop_agents()
-
-
 def _wait_for_ports(ports: list[int], timeout_s: int = 120) -> None:
     deadline = time.time() + timeout_s
     pending = set(ports)
@@ -481,30 +272,6 @@ def check_live_router_query_on_running_stack() -> None:
     print("Live travel router query sanity passed.")
 
 
-def check_live_router_query() -> None:
-    mcp_ports = _mcp_ports_from_config()
-    agent_ports = _agent_ports_from_config()
-
-    try:
-        start_mcp = _run([sys.executable, "start_mcp_servers.py"], cwd=PROJECT_ROOT)
-        _assert(start_mcp.returncode == 0, f"Failed to start MCP servers: {start_mcp.stderr.strip()}")
-        if mcp_ports:
-            _wait_for_ports(mcp_ports, timeout_s=120)
-
-        start_agents = _run([sys.executable, "start_agents.py"], cwd=PROJECT_ROOT)
-        _assert(start_agents.returncode == 0, f"Failed to start agents: {start_agents.stderr.strip()}")
-        if agent_ports:
-            _wait_for_ports(agent_ports, timeout_s=120)
-
-        check_live_router_query_on_running_stack()
-    finally:
-        _run([sys.executable, "start_agents.py", "--stop"], cwd=PROJECT_ROOT)
-        _run(
-            [sys.executable, "start_mcp_servers.py", "--stop", "--kill"],
-            cwd=PROJECT_ROOT,
-        )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sanity checks for travel planner kit")
     parser.add_argument("--check-ovms", action="store_true", help="Check live OVMS LLM/VLM endpoints")
@@ -526,11 +293,11 @@ def main() -> None:
         check_live_router_query_on_running_stack()
         return
 
+    # Default behavior for local/manual usage: run the same staged checks.
     check_live_llm_sanity()
-    if _env_truthy("LIVE_ROUTER_QUERY", "false"):
-        check_live_router_query()
-    else:
-        check_mcp_and_agents_sanity()
+    check_mcp_services_up()
+    check_agent_services_up()
+    check_live_router_query_on_running_stack()
     print("All sanity checks passed.")
 
 
