@@ -538,11 +538,19 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
                 text = "".join(text_chunks).strip()
             if not text and last_text:
                 text = last_text
-            return text or "No response received"
+            if not text:
+                raise RuntimeError(
+                    "Agent did not return any response content (no text from "
+                    "extract_response_text, stream, or task history)."
+                )
+            return text
 
         for task in pending:
             task.cancel()
-        return "No response received"
+        raise RuntimeError(
+            f"Agent did not return any response content within {timeout_s}s "
+            f"(last_state={last_state or 'unknown'})."
+        )
 
     try:
         return asyncio.run(_run_query())
