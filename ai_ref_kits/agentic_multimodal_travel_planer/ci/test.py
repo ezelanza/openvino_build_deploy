@@ -329,31 +329,33 @@ def check_agent_services_up() -> None:
         print(f"{agent_name} agent-card: {json.dumps(card_payload, ensure_ascii=True)}")
         agent_url = _agent_url_from_card(card_payload)
 
+        print(f"Querying {agent_name} at {agent_url}...", flush=True)
+        last_error: RuntimeError | None = None
+        response_text = ""
+        for attempt in range(1, query_retries + 1):
+            try:
+                response_text = _query_agent(
+                    query=query,
+                    agent_url=agent_url,
+                    timeout_s=query_timeout_s,
+                )
+                break
+            except RuntimeError as exc:
+                last_error = exc
+                print(
+                    f"{agent_name} query attempt {attempt}/{query_retries} failed: {exc}",
+                    flush=True,
+                )
+                if attempt < query_retries:
+                    time.sleep(2)
+        if not response_text:
+            raise RuntimeError(
+                f"{agent_name} query failed after {query_retries} attempts"
+            ) from last_error
+        print(f"{agent_name} response: {response_text}")
+        
+        # Only check token for travel_router since other agents have different purposes
         if agent_name == "travel_router":
-            print(f"Querying {agent_name} at {agent_url}...", flush=True)
-            last_error: RuntimeError | None = None
-            response_text = ""
-            for attempt in range(1, query_retries + 1):
-                try:
-                    response_text = _query_agent(
-                        query=query,
-                        agent_url=agent_url,
-                        timeout_s=query_timeout_s,
-                    )
-                    break
-                except RuntimeError as exc:
-                    last_error = exc
-                    print(
-                        f"{agent_name} query attempt {attempt}/{query_retries} failed: {exc}",
-                        flush=True,
-                    )
-                    if attempt < query_retries:
-                        time.sleep(2)
-            if not response_text:
-                raise RuntimeError(
-                    f"{agent_name} query failed after {query_retries} attempts"
-                ) from last_error
-            print(f"{agent_name} response: {response_text}")
             _assert(
                 expected_token.lower() in response_text.lower(),
                 f"{agent_name} response missing expected token '{expected_token}'.",
