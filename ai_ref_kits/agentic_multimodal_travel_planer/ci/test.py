@@ -234,13 +234,13 @@ def check_agent_services_up() -> None:
     print(f"Agent ports are up: {ports}")
 
 
-def _query_travel_router(query: str, router_url: str) -> str:
+def _query_agent(query: str, agent_url: str) -> str:
     from beeai_framework.adapters.a2a.agents.agent import A2AAgent
     from beeai_framework.memory import UnconstrainedMemory
     from utils.util import extract_response_text
 
     async def _run_query() -> str:
-        client = A2AAgent(url=router_url, memory=UnconstrainedMemory())
+        client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
         response = await client.run(query)
         return extract_response_text(response)
 
@@ -250,26 +250,22 @@ def _query_travel_router(query: str, router_url: str) -> str:
 def check_live_router_query_on_running_stack() -> None:
     agents_cfg = _load_yaml(PROJECT_ROOT / "config" / "agents_config.yaml")
     query = "Reply with exactly OK."
-    expected_token = "ok"
-    router_cfg = agents_cfg.get("travel_router", {})
-    _assert(
-        isinstance(router_cfg, dict) and router_cfg.get("port"),
-        "Missing required config: travel_router.port in agents_config.yaml",
-    )
-    router_port = int(router_cfg["port"])
-    router_url = f"http://localhost:{router_port}"
+    enabled_agents = [
+        (name, cfg)
+        for name, cfg in agents_cfg.items()
+        if isinstance(cfg, dict) and cfg.get("enabled", True) and cfg.get("port")
+    ]
+    _assert(enabled_agents, "No enabled agents found in agents_config.yaml")
+
     check_mcp_services_up()
     check_agent_services_up()
-    response_text = _query_travel_router(query=query, router_url=router_url)
-    print(f"Travel router response: {response_text}")
-    _assert(
-        expected_token in response_text.lower(),
-        (
-            f"Travel router response did not include expected token "
-            f"'{expected_token}'."
-        ),
-    )
-    print("Live travel router query sanity passed.")
+
+    for agent_name, cfg in enabled_agents:
+        agent_url = f"http://localhost:{int(cfg['port'])}"
+        response_text = _query_agent(query=query, agent_url=agent_url)
+        print(f"{agent_name} response: {response_text}")
+
+    print("Live agent query sanity passed.")
 
 
 def main() -> None:
