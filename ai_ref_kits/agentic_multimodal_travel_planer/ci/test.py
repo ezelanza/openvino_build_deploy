@@ -345,7 +345,10 @@ def check_agent_services_up() -> None:
     _wait_for_ports(ports, timeout_s=120)
     print(f"Agent ports are up: {ports}")
 
-    query, expected_token = _router_sanity_test_case()
+    # Query all agents to verify they are up and responsive
+    # Specialized agents (flight_finder, hotel_finder, image_captioning) expect specific tasks
+    # travel_router expects a general query or handoff result
+    
     query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 600)
     query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
 
@@ -357,7 +360,23 @@ def check_agent_services_up() -> None:
         print(f"{agent_name} agent-card: {json.dumps(card_payload, ensure_ascii=True)}")
         agent_url = _agent_url_from_card(card_payload)
 
-        print(f"Querying {agent_name} at {agent_url}...", flush=True)
+        # Determine appropriate query for each agent type
+        if agent_name == "travel_router":
+            query, expected_token = _router_sanity_test_case()
+        elif agent_name == "flight_finder":
+            query = "List flights from New York to London"
+            expected_token = None # No specific token, just successful response
+        elif agent_name == "hotel_finder":
+            query = "Find hotels in Paris"
+            expected_token = None
+        elif agent_name == "image_captioning":
+            query = "Describe this image" # Will fail without image but should respond
+            expected_token = None
+        else:
+            query = "Hello"
+            expected_token = None
+
+        print(f"Querying {agent_name} at {agent_url} with: '{query}'...", flush=True)
         last_error: RuntimeError | None = None
         response_text = ""
         for attempt in range(1, query_retries + 1):
@@ -383,7 +402,7 @@ def check_agent_services_up() -> None:
         print(f"{agent_name} response: {response_text}")
         
         # Only check token for travel_router since other agents have different purposes
-        if agent_name == "travel_router":
+        if agent_name == "travel_router" and expected_token:
             _assert(
                 expected_token.lower() in response_text.lower(),
                 f"{agent_name} response missing expected token '{expected_token}'.",
