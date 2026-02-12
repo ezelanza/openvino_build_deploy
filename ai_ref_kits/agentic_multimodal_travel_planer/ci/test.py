@@ -22,10 +22,20 @@ from pathlib import Path
 
 from openai import OpenAI
 import yaml
-
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from beeai_framework.adapters.a2a.agents.agent import A2AAgent
+    from beeai_framework.memory import UnconstrainedMemory
+except ImportError:
+    A2AAgent = None  # type: ignore[assignment]
+    UnconstrainedMemory = None  # type: ignore[assignment]
+
+try:
+    from utils.util import extract_response_text
+except ImportError:
+    extract_response_text = None  # type: ignore[assignment]
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -283,9 +293,14 @@ def check_agent_services_up() -> None:
 
 
 def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
-    from beeai_framework.adapters.a2a.agents.agent import A2AAgent
-    from beeai_framework.memory import UnconstrainedMemory
-    from utils.util import extract_response_text
+    _assert(
+        A2AAgent is not None and UnconstrainedMemory is not None,
+        "Missing beeai_framework dependency for agent queries.",
+    )
+    _assert(
+        extract_response_text is not None,
+        "Missing utils.util.extract_response_text import for agent queries.",
+    )
 
     async def _run_query() -> str:
         client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
