@@ -28,14 +28,22 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
     from beeai_framework.adapters.a2a.agents.agent import A2AAgent
+    from beeai_framework.adapters.a2a.agents.events import A2AAgentUpdateEvent
+    from beeai_framework.agents.requirement.events import (
+        RequirementAgentFinalAnswerEvent,
+    )
     from beeai_framework.memory import UnconstrainedMemory
 except ImportError:
     A2AAgent = None  # type: ignore[assignment]
+    A2AAgentUpdateEvent = None  # type: ignore[assignment]
+    RequirementAgentFinalAnswerEvent = None  # type: ignore[assignment]
     UnconstrainedMemory = None  # type: ignore[assignment]
 
 try:
+    from utils.streaming_citation_parser import StreamingCitationParser
     from utils.util import extract_response_text
 except ImportError:
+    StreamingCitationParser = None  # type: ignore[assignment]
     extract_response_text = None  # type: ignore[assignment]
 
 
@@ -348,7 +356,7 @@ def check_agent_services_up() -> None:
     # Specialized agents (flight_finder, hotel_finder, image_captioning) expect specific tasks
     # travel_router expects a general query or handoff result
     
-    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 300)
+    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 60)
     query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
 
     for agent_name, cfg in _enabled_agents_from_config():
@@ -409,52 +417,90 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
         "Missing utils.util.extract_response_text import for agent queries.",
     )
 
-    async def _run_query() -> str:
-        client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
+    last_state: str | None = None
+    last_text: str = ""
 
-        async def _debug_event(data: object, event: object) -> None:
+    async def _run_query() -> str:
+        nonlocal last_state, last_text
+        client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
+        streaming_events: list[tuple[object, object]] = []
+        final_chunks: list[str] = []
+        last_processed_length = 0
+        citation_parser = (
+            StreamingCitationParser() if StreamingCitationParser else None
+        )
+
+        async def capture_events(data: object, event: object) -> None:
+            nonlocal last_processed_length, last_state, last_text
             name = getattr(event, "name", "unknown")
             info = ""
-            # Capture text delta from final_answer
-            if name == "final_answer" and hasattr(data, "delta") and data.delta:
+            streaming_events.append((data, event))
+
+            if (
+                name == "final_answer"
+                and RequirementAgentFinalAnswerEvent
+                and isinstance(data, RequirementAgentFinalAnswerEvent)
+                and getattr(data, "delta", None)
+            ):
+                if citation_parser:
+                    clean_text, _ = citation_parser.process_chunk(data.delta)
+                    if clean_text:
+                        final_chunks.append(clean_text)
+                else:
+                    final_chunks.append(str(data.delta))
                 info = f" delta={repr(data.delta)}"
-            
-            # Capture thought/status from update
-            if name == "update" and hasattr(data, "value"):
-                val = data.value
-                if isinstance(val, tuple) and len(val) >= 2:
-                    # val[1] is status_update
-                    status = val[1]
-                    if hasattr(status, "status") and hasattr(status.status, "state"):
-                         info = f" state={status.status.state}"
-            
+
+            if A2AAgentUpdateEvent and isinstance(data, A2AAgentUpdateEvent):
+                value = getattr(data, "value", None)
+                if isinstance(value, tuple) and len(value) >= 2:
+                    task, status_update = value
+                    if hasattr(status_update, "status") and hasattr(
+                        status_update.status, "state"
+                    ):
+                        last_state = str(status_update.status.state)
+                        info = f" state={last_state}"
+
+                    if hasattr(task, "history") and task.history:
+                        last_msg = task.history[-1]
+                        if hasattr(last_msg, "parts") and last_msg.parts:
+                            current_text = ""
+                            for part in last_msg.parts:
+                                if (
+                                    hasattr(part, "root")
+                                    and hasattr(part.root, "text")
+                                ):
+                                    current_text += part.root.text or ""
+                            if len(current_text) > last_processed_length:
+                                last_processed_length = len(current_text)
+                                last_text = current_text
+
             print(f"  [Event] {name}{info}", flush=True)
 
-        # Match start_ui.py pattern: do NOT wrap with asyncio.wait_for
-        # NOTE: If agent hangs in 'working' state, it means it's waiting for LLM or tool.
-        # We can't force it to finish without a timeout.
-        response = await client.run(query).on("update", _debug_event).on(
-            "final_answer", _debug_event
+        response = await client.run(query).on("update", capture_events).on(
+            "final_answer", capture_events
         )
-        
-        # If response is empty but we saw events, try to extract from history or last event
-        # This handles cases where extract_response_text might miss the final answer event data
+
+        if citation_parser:
+            final_chunk = citation_parser.finalize()
+            if final_chunk:
+                final_chunks.append(final_chunk)
+
         text = extract_response_text(response)
-        if not text:
-             # Fallback: check if we got a final answer in the response object directly
-             if hasattr(response, 'result') and response.result:
-                 return str(response.result)
-             # Fallback: check history
-             if hasattr(response, 'history') and response.history:
-                 last_msg = response.history[-1]
-                 if hasattr(last_msg, 'content'):
-                     return str(last_msg.content)
-        
-        return text
+        if not text and final_chunks:
+            text = "".join(final_chunks).strip()
+        if not text and last_text:
+            text = last_text
+        return text or "No response received"
 
     try:
-        # Apply timeout at the asyncio.run level instead
-        return asyncio.run(_run_query())
+        return asyncio.run(asyncio.wait_for(_run_query(), timeout=timeout_s))
+    except asyncio.TimeoutError as exc:
+        state_info = f" last_state={last_state}" if last_state else ""
+        partial_info = f" last_text={last_text!r}" if last_text else ""
+        raise RuntimeError(
+            f"Timed out after {timeout_s}s waiting for agent response from "
+            f"{agent_url}.{state_info}{partial_info}"
+        ) from exc
     except Exception as exc:
         raise RuntimeError(
             f"Agent query failed for {agent_url}: {exc}"
