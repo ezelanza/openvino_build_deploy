@@ -348,7 +348,7 @@ def check_agent_services_up() -> None:
     # Specialized agents (flight_finder, hotel_finder, image_captioning) expect specific tasks
     # travel_router expects a general query or handoff result
     
-    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 20)
+    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 300)
     query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
 
     for agent_name, cfg in _enabled_agents_from_config():
