@@ -245,22 +245,28 @@ def check_agent_services_up() -> None:
     query = "hello"
     for agent_name, cfg in _enabled_agents_from_config():
         agent_url = f"http://localhost:{int(cfg['port'])}"
-        response_text = _query_agent(query=query, agent_url=agent_url)
+        print(f"Querying {agent_name} at {agent_url}...", flush=True)
+        response_text = _query_agent(query=query, agent_url=agent_url, timeout_s=90)
         print(f"{agent_name} response: {response_text}")
     print("Agent response sanity passed.")
 
 
-def _query_agent(query: str, agent_url: str) -> str:
+def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
     from beeai_framework.adapters.a2a.agents.agent import A2AAgent
     from beeai_framework.memory import UnconstrainedMemory
     from utils.util import extract_response_text
 
     async def _run_query() -> str:
         client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
-        response = await client.run(query)
+        response = await asyncio.wait_for(client.run(query), timeout=timeout_s)
         return extract_response_text(response)
 
-    return asyncio.run(_run_query())
+    try:
+        return asyncio.run(_run_query())
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Timed out after {timeout_s}s waiting for agent response from {agent_url}"
+        ) from exc
 
 
 def check_overall_placeholder() -> None:
