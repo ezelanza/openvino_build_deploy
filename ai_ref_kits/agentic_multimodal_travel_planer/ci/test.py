@@ -38,7 +38,6 @@ try:
 except ImportError:
     extract_response_text = None  # type: ignore[assignment]
 
-ROUTER_SANITY_QUERY = "What is 2+2?"
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -311,7 +310,12 @@ def _enabled_agents_from_config() -> list[tuple[str, dict]]:
 
 
 def _router_sanity_test_case() -> str:
-    return ROUTER_SANITY_QUERY
+    agents_cfg = _load_yaml(PROJECT_ROOT / "config" / "agents_config.yaml")
+    router_cfg = agents_cfg.get("travel_router", {})
+    sanity_cfg = router_cfg.get("sanity", {})
+    if isinstance(sanity_cfg, dict) and sanity_cfg.get("query"):
+        return str(sanity_cfg["query"])
+    return "What is 2+2?"
 
 
 def _agent_url_from_card(card_payload: dict) -> str:
