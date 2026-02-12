@@ -38,6 +38,13 @@ try:
 except ImportError:
     extract_response_text = None  # type: ignore[assignment]
 
+ROUTER_SANITY_QUERY = (
+    "Find flights from Milan to Berlin for 2026-03-01 to 2026-03-10 in "
+    "economy class, confirm all details, then include token SANITY_OK in "
+    "your final answer."
+)
+ROUTER_SANITY_EXPECTED_TOKEN = "SANITY_OK"
+
 
 def _assert(condition: bool, message: str) -> None:
     if not condition:
@@ -280,6 +287,23 @@ def _enabled_agents_from_config() -> list[tuple[str, dict]]:
     ]
 
 
+def _router_sanity_test_case() -> tuple[str, str]:
+    return ROUTER_SANITY_QUERY, ROUTER_SANITY_EXPECTED_TOKEN
+
+
+def _agent_url_from_card(card_payload: dict) -> str:
+    if isinstance(card_payload, dict):
+        raw_url = card_payload.get("url")
+        if isinstance(raw_url, str) and raw_url.strip():
+            parsed = urllib.parse.urlparse(raw_url.strip())
+            if parsed.scheme in {"http", "https"} and parsed.port is not None:
+                return f"{parsed.scheme}://127.0.0.1:{parsed.port}"
+    raise RuntimeError(
+        "Agent card missing valid 'url' with explicit port. "
+        f"Payload={json.dumps(card_payload, ensure_ascii=True)}"
+    )
+
+
 def check_mcp_services_up() -> None:
     ports = _mcp_ports_from_config()
     _assert(ports, "No MCP ports found in mcp_config.yaml")
@@ -293,15 +317,17 @@ def check_agent_services_up() -> None:
     _wait_for_ports(ports, timeout_s=120)
     print(f"Agent ports are up: {ports}")
 
-    query = "Please reply with exactly: OK"
+    query, expected_token = _router_sanity_test_case()
     query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 240)
     query_retries = _int_env("AGENT_QUERY_RETRIES", 2)
 
     for agent_name, cfg in _enabled_agents_from_config():
-        agent_url = f"http://localhost:{int(cfg['port'])}"
-        card_url = f"{agent_url}/.well-known/agent-card.json"
+        agent_port = int(cfg["port"])
+        card_base_url = f"http://127.0.0.1:{agent_port}"
+        card_url = f"{card_base_url}/.well-known/agent-card.json"
         card_payload = _http_get_json(card_url)
         print(f"{agent_name} agent-card: {json.dumps(card_payload, ensure_ascii=True)}")
+        agent_url = _agent_url_from_card(card_payload)
 
         if agent_name == "travel_router":
             print(f"Querying {agent_name} at {agent_url}...", flush=True)
@@ -328,6 +354,10 @@ def check_agent_services_up() -> None:
                     f"{agent_name} query failed after {query_retries} attempts"
                 ) from last_error
             print(f"{agent_name} response: {response_text}")
+            _assert(
+                expected_token.lower() in response_text.lower(),
+                f"{agent_name} response missing expected token '{expected_token}'.",
+            )
     print("Agent endpoint sanity passed.")
 
 
@@ -343,7 +373,16 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
 
     async def _run_query() -> str:
         client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
-        response = await asyncio.wait_for(client.run(query), timeout=timeout_s)
+
+        async def _ignore_event(_data: object, _event: object) -> None:
+            return None
+
+        response = await asyncio.wait_for(
+            client.run(query).on("update", _ignore_event).on(
+                "final_answer", _ignore_event
+            ),
+            timeout=timeout_s,
+        )
         return extract_response_text(response)
 
     try:
