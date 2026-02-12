@@ -413,7 +413,21 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
         response = await client.run(query).on("update", _debug_event).on(
             "final_answer", _debug_event
         )
-        return extract_response_text(response)
+        
+        # If response is empty but we saw events, try to extract from history or last event
+        # This handles cases where extract_response_text might miss the final answer event data
+        text = extract_response_text(response)
+        if not text:
+             # Fallback: check if we got a final answer in the response object directly
+             if hasattr(response, 'result') and response.result:
+                 return str(response.result)
+             # Fallback: check history
+             if hasattr(response, 'history') and response.history:
+                 last_msg = response.history[-1]
+                 if hasattr(last_msg, 'content'):
+                     return str(last_msg.content)
+        
+        return text
 
     try:
         # Apply timeout at the asyncio.run level instead
