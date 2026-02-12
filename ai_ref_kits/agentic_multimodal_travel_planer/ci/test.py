@@ -361,7 +361,13 @@ def check_agent_services_up() -> None:
 
         # Determine appropriate query for each agent type
         if agent_name == "travel_router":
-            query = _router_sanity_test_case()
+            query = "Hello, are you ready?"
+        elif agent_name == "flight_finder":
+            query = "List flights from New York to London"
+        elif agent_name == "hotel_finder":
+            query = "Find hotels in Paris"
+        elif agent_name == "image_captioning":
+            query = "Describe this image"
         else:
             query = "What is 2+2?"
 
