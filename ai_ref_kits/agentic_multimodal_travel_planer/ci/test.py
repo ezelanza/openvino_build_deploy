@@ -361,8 +361,8 @@ def check_agent_services_up() -> None:
     # Specialized agents (flight_finder, hotel_finder, image_captioning) expect specific tasks
     # travel_router expects a general query or handoff result
     
-    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 60)
-    query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
+    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 120)
+    query_retries = _int_env("AGENT_QUERY_RETRIES", 2)
 
     for agent_name, cfg in _enabled_agents_from_config():
         agent_port = int(cfg["port"])
@@ -395,8 +395,9 @@ def check_agent_services_up() -> None:
                 if attempt < query_retries:
                     time.sleep(2)
         if not response_text or response_text == "[No response]":
+            reason = str(last_error) if last_error else "no response from agent (timeout or no events)"
             raise RuntimeError(
-                f"{agent_name} query failed after {query_retries} attempts"
+                f"{agent_name} query failed after {query_retries} attempts: {reason}"
             ) from last_error
         print(f"{agent_name} response: {response_text}")
         
