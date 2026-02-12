@@ -210,11 +210,13 @@ def check_live_llm_sanity() -> None:
         "VLM /models endpoint did not return expected payload.",
     )
     llm_model = _pick_model_from_models_endpoint(llm_models)
+    vlm_model = _pick_model_from_models_endpoint(vlm_models)
 
-    # Use OpenAI-compatible SDK path to match real application behavior.
+    # Test LLM chat completion
+    print(f"Testing LLM chat completion at {llm_base}...")
     try:
-        client = OpenAI(base_url=llm_base, api_key="unused")
-        completion = client.chat.completions.create(
+        llm_client = OpenAI(base_url=llm_base, api_key="unused")
+        llm_completion = llm_client.chat.completions.create(
             model=llm_model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
@@ -226,16 +228,42 @@ def check_live_llm_sanity() -> None:
         )
     except Exception as exc:
         raise RuntimeError(
-            f"OpenAI SDK chat completion failed for {llm_base}: {exc}"
+            f"OpenAI SDK chat completion failed for LLM {llm_base}: {exc}"
         ) from exc
 
-    print(f"Chat completion response: {_serialize_completion_for_logs(completion)}")
-    choices = completion.choices if hasattr(completion, "choices") else []
+    print(f"LLM chat completion response: {_serialize_completion_for_logs(llm_completion)}")
+    llm_choices = llm_completion.choices if hasattr(llm_completion, "choices") else []
     _assert(
-        isinstance(choices, list) and len(choices) > 0,
+        isinstance(llm_choices, list) and len(llm_choices) > 0,
         "No LLM choices returned.",
     )
-    print("Live LLM sanity checks passed.")
+
+    # Test VLM chat completion
+    print(f"Testing VLM chat completion at {vlm_base}...")
+    try:
+        vlm_client = OpenAI(base_url=vlm_base, api_key="unused")
+        vlm_completion = vlm_client.chat.completions.create(
+            model=vlm_model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "hello"},
+            ],
+            max_tokens=100,
+            extra_body={"top_k": 1},
+            stream=False,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"OpenAI SDK chat completion failed for VLM {vlm_base}: {exc}"
+        ) from exc
+
+    print(f"VLM chat completion response: {_serialize_completion_for_logs(vlm_completion)}")
+    vlm_choices = vlm_completion.choices if hasattr(vlm_completion, "choices") else []
+    _assert(
+        isinstance(vlm_choices, list) and len(vlm_choices) > 0,
+        "No VLM choices returned.",
+    )
+    print("Live LLM and VLM sanity checks passed.")
 
 
 def _wait_for_ports(ports: list[int], timeout_s: int = 120) -> None:
