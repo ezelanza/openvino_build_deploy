@@ -180,6 +180,17 @@ def _wait_for_models_payload(
     )
 
 
+def _serialize_completion_for_logs(completion: object) -> str:
+    try:
+        if hasattr(completion, "model_dump"):
+            payload = completion.model_dump()
+        else:
+            payload = str(completion)
+        return json.dumps(payload, ensure_ascii=True)
+    except Exception:
+        return str(completion)
+
+
 def check_live_llm_sanity() -> None:
     llm_base, vlm_base, _configured_llm_model = _resolve_llm_vlm_targets_from_config()
     llm_base = _ensure_v3_base(llm_base)
@@ -216,6 +227,7 @@ def check_live_llm_sanity() -> None:
             f"OpenAI SDK chat completion failed for {llm_base}: {exc}"
         ) from exc
 
+    print(f"Chat completion response: {_serialize_completion_for_logs(completion)}")
     choices = completion.choices if hasattr(completion, "choices") else []
     _assert(isinstance(choices, list) and len(choices) > 0, "No LLM choices returned.")
     print("Live LLM sanity checks passed.")
