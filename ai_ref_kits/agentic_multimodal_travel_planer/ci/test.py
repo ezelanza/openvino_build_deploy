@@ -480,10 +480,10 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
                         last_state = str(status_update.status.state)
                         info = f" state={last_state}"
 
+                    current_text = ""
                     if hasattr(task, "history") and task.history:
                         last_msg = task.history[-1]
                         if hasattr(last_msg, "parts") and last_msg.parts:
-                            current_text = ""
                             for part in last_msg.parts:
                                 if (
                                     hasattr(part, "root")
