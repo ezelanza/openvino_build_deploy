@@ -505,11 +505,14 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
 
             print(f"  [Event] {name}{info}", flush=True)
 
-        response_task = asyncio.create_task(
-            client.run(query).on("update", capture_events).on(
-                "final_answer", capture_events
-            )
+        run_handle = client.run(query).on("update", capture_events).on(
+            "final_answer", capture_events
         )
+
+        async def _await_response():
+            return await run_handle
+
+        response_task = asyncio.create_task(_await_response())
         ready_task = asyncio.create_task(response_ready.wait())
 
         done, pending = await asyncio.wait(
