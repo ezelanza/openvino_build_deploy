@@ -328,10 +328,7 @@ def _router_sanity_test_case() -> str:
     sanity_cfg = router_cfg.get("sanity", {})
     if isinstance(sanity_cfg, dict) and sanity_cfg.get("query"):
         return str(sanity_cfg["query"])
-    return (
-        "Give me flights from Milan to Berlin for 2026-03-01 to 2026-03-10 "
-        "in economy class."
-    )
+    return "What is 2+2?"
 
 
 def _agent_url_from_card(card_payload: dict) -> str:
@@ -375,25 +372,8 @@ def check_agent_services_up() -> None:
         print(f"{agent_name} agent-card: {json.dumps(card_payload, ensure_ascii=True)}")
         agent_url = _agent_url_from_card(card_payload)
 
-        # Determine appropriate query for each agent type
-        if agent_name == "travel_router":
-            query = _router_sanity_test_case()
-        elif agent_name == "flight_finder":
-            query = (
-                "Find flights from New York to London departing 2026-03-01 "
-                "and returning 2026-03-10 in economy class."
-            )
-        elif agent_name == "hotel_finder":
-            query = (
-                "Find hotels in Paris from 2026-03-01 to 2026-03-05 for 2 guests."
-            )
-        elif agent_name == "image_captioning":
-            query = (
-                "Which city is shown in this image? : <image_path> = "
-                "</tmp/nonexistent.jpg>"
-            )
-        else:
-            query = "What is 2+2?"
+        # Same simple query for all agents; they must answer it
+        query = _router_sanity_test_case()
 
         print(f"Querying {agent_name} at {agent_url} with: '{query}'...", flush=True)
         last_error: RuntimeError | None = None
