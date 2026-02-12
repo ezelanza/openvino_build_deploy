@@ -425,6 +425,8 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
             print(f"  [Event] {name}{info}", flush=True)
 
         # Match start_ui.py pattern: do NOT wrap with asyncio.wait_for
+        # NOTE: If agent hangs in 'working' state, it means it's waiting for LLM or tool.
+        # We can't force it to finish without a timeout.
         response = await client.run(query).on("update", _debug_event).on(
             "final_answer", _debug_event
         )
