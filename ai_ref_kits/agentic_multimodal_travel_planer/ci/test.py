@@ -407,7 +407,22 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
         client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
 
         async def _debug_event(data: object, event: object) -> None:
-            print(f"  [Event] {getattr(event, 'name', 'unknown')}", flush=True)
+            name = getattr(event, "name", "unknown")
+            info = ""
+            # Capture text delta from final_answer
+            if name == "final_answer" and hasattr(data, "delta") and data.delta:
+                info = f" delta={repr(data.delta)}"
+            
+            # Capture thought/status from update
+            if name == "update" and hasattr(data, "value"):
+                val = data.value
+                if isinstance(val, tuple) and len(val) >= 2:
+                    # val[1] is status_update
+                    status = val[1]
+                    if hasattr(status, "status") and hasattr(status.status, "state"):
+                         info = f" state={status.status.state}"
+            
+            print(f"  [Event] {name}{info}", flush=True)
 
         # Match start_ui.py pattern: do NOT wrap with asyncio.wait_for
         response = await client.run(query).on("update", _debug_event).on(
