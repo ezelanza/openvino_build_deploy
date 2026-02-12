@@ -148,7 +148,10 @@ def _pick_model_from_models_endpoint(models_payload: dict) -> str:
         first = data[0]
         if isinstance(first, dict) and first.get("id"):
             return str(first["id"])
-    raise RuntimeError("No model id found in /v3/models response.")
+    raise RuntimeError(
+        "No model id found in /v3/models response. "
+        f"Payload={json.dumps(models_payload, ensure_ascii=True)}"
+    )
 
 
 def _ensure_v3_base(base_url: str) -> str:

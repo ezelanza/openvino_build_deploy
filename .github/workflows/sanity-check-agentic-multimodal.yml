@@ -52,6 +52,12 @@ jobs:
         shell: bash
         run: |
           cd ai_ref_kits/agentic_multimodal_travel_planer
+          echo "=== docker ps ==="
+          docker ps
+          echo "=== ovms-llm inspect ==="
+          docker inspect --format='{{json .State}}' ovms-llm || true
+          echo "=== ovms-vlm inspect ==="
+          docker inspect --format='{{json .State}}' ovms-vlm || true
           python ci/test.py --check-ovms
       - name: Start MCP
         shell: bash
