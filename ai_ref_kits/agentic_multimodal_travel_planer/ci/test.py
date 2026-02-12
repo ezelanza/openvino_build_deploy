@@ -40,6 +40,11 @@ except ImportError:
     UnconstrainedMemory = None  # type: ignore[assignment]
 
 try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None  # type: ignore[assignment]
+
+try:
     from utils.streaming_citation_parser import StreamingCitationParser
     from utils.util import extract_response_text
 except ImportError:
@@ -324,8 +329,8 @@ def _router_sanity_test_case() -> str:
     if isinstance(sanity_cfg, dict) and sanity_cfg.get("query"):
         return str(sanity_cfg["query"])
     return (
-        "I need flights from Milan to Berlin. Depart 2026-03-01 and return "
-        "2026-03-10 in economy. Please confirm the details."
+        "Give me flights from Milan to Berlin for 2026-03-01 to 2026-03-10 "
+        "in economy class."
     )
 
 
@@ -432,6 +437,8 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
     last_text: str = ""
 
     async def _run_query() -> str:
+        if load_dotenv:
+            load_dotenv()
         nonlocal last_state, last_text
         client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
         streaming_events: list[tuple[object, object]] = []
