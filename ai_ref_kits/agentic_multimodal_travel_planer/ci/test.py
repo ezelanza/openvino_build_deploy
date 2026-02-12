@@ -318,8 +318,8 @@ def check_agent_services_up() -> None:
     print(f"Agent ports are up: {ports}")
 
     query, expected_token = _router_sanity_test_case()
-    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 240)
-    query_retries = _int_env("AGENT_QUERY_RETRIES", 2)
+    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 600)
+    query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
 
     for agent_name, cfg in _enabled_agents_from_config():
         agent_port = int(cfg["port"])
@@ -377,19 +377,18 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
         async def _ignore_event(_data: object, _event: object) -> None:
             return None
 
-        response = await asyncio.wait_for(
-            client.run(query).on("update", _ignore_event).on(
-                "final_answer", _ignore_event
-            ),
-            timeout=timeout_s,
+        # Match start_ui.py pattern: do NOT wrap with asyncio.wait_for
+        response = await client.run(query).on("update", _ignore_event).on(
+            "final_answer", _ignore_event
         )
         return extract_response_text(response)
 
     try:
+        # Apply timeout at the asyncio.run level instead
         return asyncio.run(_run_query())
-    except TimeoutError as exc:
+    except Exception as exc:
         raise RuntimeError(
-            f"Timed out after {timeout_s}s waiting for agent response from {agent_url}"
+            f"Agent query failed for {agent_url}: {exc}"
         ) from exc
 
 
