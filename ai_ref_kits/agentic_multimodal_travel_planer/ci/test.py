@@ -220,6 +220,15 @@ def _agent_ports_from_config() -> list[int]:
     ]
 
 
+def _enabled_agents_from_config() -> list[tuple[str, dict]]:
+    agents_cfg = _load_yaml(PROJECT_ROOT / "config" / "agents_config.yaml")
+    return [
+        (name, cfg)
+        for name, cfg in agents_cfg.items()
+        if isinstance(cfg, dict) and cfg.get("enabled", True) and cfg.get("port")
+    ]
+
+
 def check_mcp_services_up() -> None:
     ports = _mcp_ports_from_config()
     _assert(ports, "No MCP ports found in mcp_config.yaml")
@@ -232,6 +241,13 @@ def check_agent_services_up() -> None:
     _assert(ports, "No enabled agent ports found in agents_config.yaml")
     _wait_for_ports(ports, timeout_s=120)
     print(f"Agent ports are up: {ports}")
+
+    query = "hello"
+    for agent_name, cfg in _enabled_agents_from_config():
+        agent_url = f"http://localhost:{int(cfg['port'])}"
+        response_text = _query_agent(query=query, agent_url=agent_url)
+        print(f"{agent_name} response: {response_text}")
+    print("Agent response sanity passed.")
 
 
 def _query_agent(query: str, agent_url: str) -> str:
@@ -247,33 +263,17 @@ def _query_agent(query: str, agent_url: str) -> str:
     return asyncio.run(_run_query())
 
 
-def check_live_router_query_on_running_stack() -> None:
-    agents_cfg = _load_yaml(PROJECT_ROOT / "config" / "agents_config.yaml")
-    query = "Reply with exactly OK."
-    enabled_agents = [
-        (name, cfg)
-        for name, cfg in agents_cfg.items()
-        if isinstance(cfg, dict) and cfg.get("enabled", True) and cfg.get("port")
-    ]
-    _assert(enabled_agents, "No enabled agents found in agents_config.yaml")
-
-    check_mcp_services_up()
-    check_agent_services_up()
-
-    for agent_name, cfg in enabled_agents:
-        agent_url = f"http://localhost:{int(cfg['port'])}"
-        response_text = _query_agent(query=query, agent_url=agent_url)
-        print(f"{agent_name} response: {response_text}")
-
-    print("Live agent query sanity passed.")
+def check_overall_placeholder() -> None:
+    # Placeholder step kept to preserve workflow stage order.
+    print("Overall check placeholder: travel_router validation handled in --check-agents.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sanity checks for travel planner kit")
     parser.add_argument("--check-ovms", action="store_true", help="Check live OVMS LLM/VLM endpoints")
     parser.add_argument("--check-mcp", action="store_true", help="Check MCP services are up from config ports")
-    parser.add_argument("--check-agents", action="store_true", help="Check enabled agents are up from config ports")
-    parser.add_argument("--check-overall", action="store_true", help="Send a query to travel_router and validate response")
+    parser.add_argument("--check-agents", action="store_true", help="Check enabled agents are up and return a simple query response")
+    parser.add_argument("--check-overall", action="store_true", help="Placeholder step for overall validation")
     args = parser.parse_args()
 
     if args.check_ovms:
@@ -286,14 +286,14 @@ def main() -> None:
         check_agent_services_up()
         return
     if args.check_overall:
-        check_live_router_query_on_running_stack()
+        check_overall_placeholder()
         return
 
     # Default behavior for local/manual usage: run the same staged checks.
     check_live_llm_sanity()
     check_mcp_services_up()
     check_agent_services_up()
-    check_live_router_query_on_running_stack()
+    check_overall_placeholder()
     print("All sanity checks passed.")
 
 
