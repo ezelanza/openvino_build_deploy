@@ -325,7 +325,7 @@ def _agent_url_from_card(card_payload: dict) -> str:
         if isinstance(raw_url, str) and raw_url.strip():
             parsed = urllib.parse.urlparse(raw_url.strip())
             if parsed.scheme in {"http", "https"} and parsed.port is not None:
-                return f"{parsed.scheme}://127.0.0.1:{parsed.port}"
+                return f"{parsed.scheme}://localhost:{parsed.port}"
     raise RuntimeError(
         "Agent card missing valid 'url' with explicit port. "
         f"Payload={json.dumps(card_payload, ensure_ascii=True)}"
