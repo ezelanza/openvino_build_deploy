@@ -324,7 +324,7 @@ def _agent_url_from_card(card_payload: dict) -> str:
         if isinstance(raw_url, str) and raw_url.strip():
             parsed = urllib.parse.urlparse(raw_url.strip())
             if parsed.scheme in {"http", "https"} and parsed.port is not None:
-                return f"{parsed.scheme}://localhost:{parsed.port}"
+                return f"{parsed.scheme}://127.0.0.1:{parsed.port}"
     raise RuntimeError(
         "Agent card missing valid 'url' with explicit port. "
         f"Payload={json.dumps(card_payload, ensure_ascii=True)}"
@@ -348,7 +348,7 @@ def check_agent_services_up() -> None:
     # Specialized agents (flight_finder, hotel_finder, image_captioning) expect specific tasks
     # travel_router expects a general query or handoff result
     
-    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 600)
+    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 60)
     query_retries = _int_env("AGENT_QUERY_RETRIES", 1)
 
     for agent_name, cfg in _enabled_agents_from_config():
@@ -406,12 +406,12 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
     async def _run_query() -> str:
         client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
 
-        async def _ignore_event(_data: object, _event: object) -> None:
-            return None
+        async def _debug_event(data: object, event: object) -> None:
+            print(f"  [Event] {getattr(event, 'name', 'unknown')}", flush=True)
 
         # Match start_ui.py pattern: do NOT wrap with asyncio.wait_for
-        response = await client.run(query).on("update", _ignore_event).on(
-            "final_answer", _ignore_event
+        response = await client.run(query).on("update", _debug_event).on(
+            "final_answer", _debug_event
         )
         return extract_response_text(response)
 
