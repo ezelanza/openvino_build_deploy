@@ -435,18 +435,18 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
 
     last_state: str | None = None
     last_text: str = ""
+    response_ready: asyncio.Event | None = None
+    text_chunks: list[str] = []
 
     async def _run_query() -> str:
         if load_dotenv:
             load_dotenv()
-        nonlocal last_state, last_text
+        nonlocal last_state, last_text, response_ready
+        response_ready = asyncio.Event()
         client = A2AAgent(url=agent_url, memory=UnconstrainedMemory())
         streaming_events: list[tuple[object, object]] = []
-        final_chunks: list[str] = []
         last_processed_length = 0
-        citation_parser = (
-            StreamingCitationParser() if StreamingCitationParser else None
-        )
+        citation_parser = StreamingCitationParser() if StreamingCitationParser else None
 
         async def capture_events(data: object, event: object) -> None:
             nonlocal last_processed_length, last_state, last_text
@@ -463,9 +463,11 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
                 if citation_parser:
                     clean_text, _ = citation_parser.process_chunk(data.delta)
                     if clean_text:
-                        final_chunks.append(clean_text)
+                        text_chunks.append(clean_text)
+                        response_ready.set()
                 else:
-                    final_chunks.append(str(data.delta))
+                    text_chunks.append(str(data.delta))
+                    response_ready.set()
                 info = f" delta={repr(data.delta)}"
 
             if A2AAgentUpdateEvent and isinstance(data, A2AAgentUpdateEvent):
@@ -488,30 +490,59 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
                                     and hasattr(part.root, "text")
                                 ):
                                     current_text += part.root.text or ""
-                            if len(current_text) > last_processed_length:
-                                last_processed_length = len(current_text)
-                                last_text = current_text
+                    if len(current_text) > last_processed_length:
+                        delta = current_text[last_processed_length:]
+                        last_processed_length = len(current_text)
+                        last_text = current_text
+                        if citation_parser:
+                            clean_text, _ = citation_parser.process_chunk(delta)
+                            if clean_text:
+                                text_chunks.append(clean_text)
+                                response_ready.set()
+                        else:
+                            text_chunks.append(delta)
+                            response_ready.set()
 
             print(f"  [Event] {name}{info}", flush=True)
 
-        response = await client.run(query).on("update", capture_events).on(
-            "final_answer", capture_events
+        response_task = asyncio.create_task(
+            client.run(query).on("update", capture_events).on(
+                "final_answer", capture_events
+            )
+        )
+        ready_task = asyncio.create_task(response_ready.wait())
+
+        done, pending = await asyncio.wait(
+            {response_task, ready_task},
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=timeout_s,
         )
 
-        if citation_parser:
-            final_chunk = citation_parser.finalize()
-            if final_chunk:
-                final_chunks.append(final_chunk)
+        if ready_task in done:
+            text = "".join(text_chunks).strip()
+            if text:
+                response_task.cancel()
+                return text
 
-        text = extract_response_text(response)
-        if not text and final_chunks:
-            text = "".join(final_chunks).strip()
-        if not text and last_text:
-            text = last_text
-        return text or "No response received"
+        if response_task in done:
+            response = response_task.result()
+            if citation_parser:
+                final_chunk = citation_parser.finalize()
+                if final_chunk:
+                    text_chunks.append(final_chunk)
+            text = extract_response_text(response)
+            if not text and text_chunks:
+                text = "".join(text_chunks).strip()
+            if not text and last_text:
+                text = last_text
+            return text or "No response received"
+
+        for task in pending:
+            task.cancel()
+        return "No response received"
 
     try:
-        return asyncio.run(asyncio.wait_for(_run_query(), timeout=timeout_s))
+        return asyncio.run(_run_query())
     except asyncio.TimeoutError as exc:
         state_info = f" last_state={last_state}" if last_state else ""
         partial_info = f" last_text={last_text!r}" if last_text else ""
