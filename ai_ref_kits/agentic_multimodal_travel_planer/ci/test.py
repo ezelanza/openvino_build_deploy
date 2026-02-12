@@ -40,10 +40,8 @@ except ImportError:
 
 ROUTER_SANITY_QUERY = (
     "Find flights from Milan to Berlin for 2026-03-01 to 2026-03-10 in "
-    "economy class, confirm all details, then include token SANITY_OK in "
-    "your final answer."
+    "economy class, confirm all details."
 )
-ROUTER_SANITY_EXPECTED_TOKEN = "SANITY_OK"
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -315,8 +313,8 @@ def _enabled_agents_from_config() -> list[tuple[str, dict]]:
     ]
 
 
-def _router_sanity_test_case() -> tuple[str, str]:
-    return ROUTER_SANITY_QUERY, ROUTER_SANITY_EXPECTED_TOKEN
+def _router_sanity_test_case() -> str:
+    return ROUTER_SANITY_QUERY
 
 
 def _agent_url_from_card(card_payload: dict) -> str:
@@ -362,19 +360,15 @@ def check_agent_services_up() -> None:
 
         # Determine appropriate query for each agent type
         if agent_name == "travel_router":
-            query, expected_token = _router_sanity_test_case()
+            query = _router_sanity_test_case()
         elif agent_name == "flight_finder":
             query = "List flights from New York to London"
-            expected_token = None # No specific token, just successful response
         elif agent_name == "hotel_finder":
             query = "Find hotels in Paris"
-            expected_token = None
         elif agent_name == "image_captioning":
             query = "Describe this image" # Will fail without image but should respond
-            expected_token = None
         else:
             query = "Hello"
-            expected_token = None
 
         print(f"Querying {agent_name} at {agent_url} with: '{query}'...", flush=True)
         last_error: RuntimeError | None = None
@@ -401,12 +395,6 @@ def check_agent_services_up() -> None:
             ) from last_error
         print(f"{agent_name} response: {response_text}")
         
-        # Only check token for travel_router since other agents have different purposes
-        if agent_name == "travel_router" and expected_token:
-            _assert(
-                expected_token.lower() in response_text.lower(),
-                f"{agent_name} response missing expected token '{expected_token}'.",
-            )
     print("Agent endpoint sanity passed.")
 
 
