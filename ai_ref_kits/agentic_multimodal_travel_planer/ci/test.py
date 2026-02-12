@@ -142,63 +142,13 @@ def _resolve_llm_vlm_targets_from_config() -> tuple[str, str, str]:
     return llm_base, vlm_base, llm_model
 
 
-def _pick_model_from_models_endpoint(models_payload: dict, fallback_model: str) -> str:
+def _pick_model_from_models_endpoint(models_payload: dict) -> str:
     data = models_payload.get("data")
     if isinstance(data, list) and data:
         first = data[0]
         if isinstance(first, dict) and first.get("id"):
             return str(first["id"])
-    return fallback_model
-
-
-def _collect_chat_model_candidates(
-    models_payload: dict, configured_model: str
-) -> list[str]:
-    candidates: list[str] = []
-
-    def add(value: str | None) -> None:
-        if not value:
-            return
-        text = str(value).strip()
-        if text and text not in candidates:
-            candidates.append(text)
-            add_transforms(text)
-
-    def add_transforms(text: str) -> None:
-        # OVMS/model registry names can be normalized in some runtimes.
-        transforms = {
-            text.replace("/", "_"),
-            text.replace("/", "-"),
-            text.replace(":", "_"),
-            text.replace(":", "-"),
-        }
-        if "/" in text:
-            transforms.add(text.rsplit("/", 1)[-1])
-        for item in transforms:
-            item = item.strip()
-            if item and item not in candidates:
-                candidates.append(item)
-
-    # 1) Prefer model IDs explicitly returned by OVMS /models.
-    data = models_payload.get("data")
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                item_id = item.get("id")
-                add(item_id)
-                if isinstance(item_id, str) and "/" in item_id:
-                    add(item_id.rsplit("/", 1)[-1])
-
-    # 2) Fallback to configured names only if needed.
-    if not candidates:
-        add(configured_model)
-        add(_strip_model_provider_prefix(configured_model))
-        if "/" in configured_model:
-            add(configured_model.rsplit("/", 1)[-1])
-        if "/" in _strip_model_provider_prefix(configured_model):
-            add(_strip_model_provider_prefix(configured_model).rsplit("/", 1)[-1])
-
-    return candidates
+    raise RuntimeError("No model id found in /v3/models response.")
 
 
 def _ensure_v3_base(base_url: str) -> str:
@@ -209,7 +159,7 @@ def _ensure_v3_base(base_url: str) -> str:
 
 
 def check_live_llm_sanity() -> None:
-    llm_base, vlm_base, configured_llm_model = _resolve_llm_vlm_targets_from_config()
+    llm_base, vlm_base, _configured_llm_model = _resolve_llm_vlm_targets_from_config()
     llm_base = _ensure_v3_base(llm_base)
     vlm_base = _ensure_v3_base(vlm_base)
 
@@ -224,39 +174,21 @@ def check_live_llm_sanity() -> None:
         isinstance(vlm_models.get("data"), list),
         "VLM /models endpoint did not return expected payload.",
     )
-    llm_model = _pick_model_from_models_endpoint(llm_models, configured_llm_model)
-    model_candidates = _collect_chat_model_candidates(llm_models, llm_model)
+    llm_model = _pick_model_from_models_endpoint(llm_models)
 
     # Use OpenAI-compatible SDK path to match real application behavior.
     try:
         client = OpenAI(base_url=llm_base, api_key="unused")
-        completion = None
-        last_exc: Exception | None = None
-        for model_name in model_candidates:
-            try:
-                completion = client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user", "content": "hello"},
-                    ],
-                    max_tokens=100,
-                    extra_body={"top_k": 1},
-                    stream=False,
-                )
-                break
-            except Exception as exc:
-                last_exc = exc
-                # Keep trying aliases for model-not-found style errors.
-                if "Mediapipe graph definition" in str(exc):
-                    continue
-                raise
-
-        if completion is None:
-            raise RuntimeError(
-                "OpenAI SDK chat completion failed for all model aliases: "
-                + ", ".join(model_candidates)
-            ) from last_exc
+        completion = client.chat.completions.create(
+            model=llm_model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "hello"},
+            ],
+            max_tokens=100,
+            extra_body={"top_k": 1},
+            stream=False,
+        )
     except Exception as exc:
         raise RuntimeError(
             f"OpenAI SDK chat completion failed for {llm_base}: {exc}"
