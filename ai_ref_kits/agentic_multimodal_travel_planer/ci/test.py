@@ -162,6 +162,22 @@ def _collect_chat_model_candidates(
         text = str(value).strip()
         if text and text not in candidates:
             candidates.append(text)
+            add_transforms(text)
+
+    def add_transforms(text: str) -> None:
+        # OVMS/model registry names can be normalized in some runtimes.
+        transforms = {
+            text.replace("/", "_"),
+            text.replace("/", "-"),
+            text.replace(":", "_"),
+            text.replace(":", "-"),
+        }
+        if "/" in text:
+            transforms.add(text.rsplit("/", 1)[-1])
+        for item in transforms:
+            item = item.strip()
+            if item and item not in candidates:
+                candidates.append(item)
 
     # 1) Prefer model IDs explicitly returned by OVMS /models.
     data = models_payload.get("data")
