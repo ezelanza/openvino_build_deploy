@@ -38,6 +38,7 @@ def _is_port_open(port: int, host: str = "localhost") -> bool:
         sock.settimeout(0.4)
         return sock.connect_ex((host, port)) == 0
 
+
 def _http_get_json(url: str, timeout: int = 20) -> dict:
     req = urllib.request.Request(url, method="GET")
     try:
@@ -62,11 +63,24 @@ def _strip_model_provider_prefix(model_name: str) -> str:
 
 def _force_localhost(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
-    _assert(parsed.scheme in {"http", "https"}, f"Invalid URL scheme in config: {url}")
-    _assert(parsed.port is not None, f"URL must include explicit port in config: {url}")
+    _assert(
+        parsed.scheme in {"http", "https"},
+        f"Invalid URL scheme in config: {url}",
+    )
+    _assert(
+        parsed.port is not None,
+        f"URL must include explicit port in config: {url}",
+    )
     netloc = f"localhost:{parsed.port}"
     return urllib.parse.urlunparse(
-        (parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
+        (
+            parsed.scheme,
+            netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
     )
 
 
@@ -147,7 +161,9 @@ def _serialize_completion_for_logs(completion: object) -> str:
 
 
 def check_live_llm_sanity() -> None:
-    llm_base, vlm_base, _configured_llm_model = _resolve_llm_vlm_targets_from_config()
+    llm_base, vlm_base, _configured_llm_model = (
+        _resolve_llm_vlm_targets_from_config()
+    )
     llm_base = _ensure_v3_base(llm_base)
     vlm_base = _ensure_v3_base(vlm_base)
 
@@ -184,7 +200,10 @@ def check_live_llm_sanity() -> None:
 
     print(f"Chat completion response: {_serialize_completion_for_logs(completion)}")
     choices = completion.choices if hasattr(completion, "choices") else []
-    _assert(isinstance(choices, list) and len(choices) > 0, "No LLM choices returned.")
+    _assert(
+        isinstance(choices, list) and len(choices) > 0,
+        "No LLM choices returned.",
+    )
     print("Live LLM sanity checks passed.")
 
 
@@ -216,7 +235,11 @@ def _agent_ports_from_config() -> list[int]:
     return [
         int(section.get("port"))
         for section in agents_cfg.values()
-        if isinstance(section, dict) and section.get("enabled", True) and section.get("port")
+        if (
+            isinstance(section, dict)
+            and section.get("enabled", True)
+            and section.get("port")
+        )
     ]
 
 
@@ -225,7 +248,11 @@ def _enabled_agents_from_config() -> list[tuple[str, dict]]:
     return [
         (name, cfg)
         for name, cfg in agents_cfg.items()
-        if isinstance(cfg, dict) and cfg.get("enabled", True) and cfg.get("port")
+        if (
+            isinstance(cfg, dict)
+            and cfg.get("enabled", True)
+            and cfg.get("port")
+        )
     ]
 
 
@@ -246,7 +273,11 @@ def check_agent_services_up() -> None:
     for agent_name, cfg in _enabled_agents_from_config():
         agent_url = f"http://localhost:{int(cfg['port'])}"
         print(f"Querying {agent_name} at {agent_url}...", flush=True)
-        response_text = _query_agent(query=query, agent_url=agent_url, timeout_s=90)
+        response_text = _query_agent(
+            query=query,
+            agent_url=agent_url,
+            timeout_s=90,
+        )
         print(f"{agent_name} response: {response_text}")
     print("Agent response sanity passed.")
 
@@ -271,15 +302,36 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
 
 def check_overall_placeholder() -> None:
     # Placeholder step kept to preserve workflow stage order.
-    print("Overall check placeholder: travel_router validation handled in --check-agents.")
+    print(
+        "Overall check placeholder: travel_router validation handled in "
+        "--check-agents."
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sanity checks for travel planner kit")
-    parser.add_argument("--check-ovms", action="store_true", help="Check live OVMS LLM/VLM endpoints")
-    parser.add_argument("--check-mcp", action="store_true", help="Check MCP services are up from config ports")
-    parser.add_argument("--check-agents", action="store_true", help="Check enabled agents are up and return a simple query response")
-    parser.add_argument("--check-overall", action="store_true", help="Placeholder step for overall validation")
+    parser = argparse.ArgumentParser(
+        description="Sanity checks for travel planner kit"
+    )
+    parser.add_argument(
+        "--check-ovms",
+        action="store_true",
+        help="Check live OVMS LLM/VLM endpoints",
+    )
+    parser.add_argument(
+        "--check-mcp",
+        action="store_true",
+        help="Check MCP services are up from config ports",
+    )
+    parser.add_argument(
+        "--check-agents",
+        action="store_true",
+        help="Check enabled agents are up and return a simple query response",
+    )
+    parser.add_argument(
+        "--check-overall",
+        action="store_true",
+        help="Placeholder step for overall validation",
+    )
     args = parser.parse_args()
 
     if args.check_ovms:
