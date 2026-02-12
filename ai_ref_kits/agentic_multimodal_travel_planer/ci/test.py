@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import argparse
 import json
+import os
 import socket
 import sys
 import time
@@ -41,6 +42,19 @@ except ImportError:
 def _assert(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    return default
 
 
 def _is_port_open(port: int, host: str = "localhost") -> bool:
@@ -279,7 +293,10 @@ def check_agent_services_up() -> None:
     _wait_for_ports(ports, timeout_s=120)
     print(f"Agent ports are up: {ports}")
 
-    query = "hello"
+    query = "Please reply with exactly: OK"
+    query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 240)
+    query_retries = _int_env("AGENT_QUERY_RETRIES", 2)
+
     for agent_name, cfg in _enabled_agents_from_config():
         agent_url = f"http://localhost:{int(cfg['port'])}"
         card_url = f"{agent_url}/.well-known/agent-card.json"
@@ -288,11 +305,28 @@ def check_agent_services_up() -> None:
 
         if agent_name == "travel_router":
             print(f"Querying {agent_name} at {agent_url}...", flush=True)
-            response_text = _query_agent(
-                query=query,
-                agent_url=agent_url,
-                timeout_s=90,
-            )
+            last_error: RuntimeError | None = None
+            response_text = ""
+            for attempt in range(1, query_retries + 1):
+                try:
+                    response_text = _query_agent(
+                        query=query,
+                        agent_url=agent_url,
+                        timeout_s=query_timeout_s,
+                    )
+                    break
+                except RuntimeError as exc:
+                    last_error = exc
+                    print(
+                        f"{agent_name} query attempt {attempt}/{query_retries} failed: {exc}",
+                        flush=True,
+                    )
+                    if attempt < query_retries:
+                        time.sleep(2)
+            if not response_text:
+                raise RuntimeError(
+                    f"{agent_name} query failed after {query_retries} attempts"
+                ) from last_error
             print(f"{agent_name} response: {response_text}")
     print("Agent endpoint sanity passed.")
 
