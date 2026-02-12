@@ -161,14 +161,33 @@ def _ensure_v3_base(base_url: str) -> str:
     return f"{base}/v3"
 
 
+def _wait_for_models_payload(
+    base_url: str, label: str, timeout_s: int = 180, interval_s: float = 2.0
+) -> dict:
+    deadline = time.time() + timeout_s
+    last_payload: dict = {}
+    while time.time() < deadline:
+        payload = _http_get_json(f"{base_url}/models")
+        last_payload = payload if isinstance(payload, dict) else {}
+        data = last_payload.get("data")
+        if isinstance(data, list) and len(data) > 0:
+            return last_payload
+        time.sleep(interval_s)
+
+    raise RuntimeError(
+        f"{label} models did not become ready within {timeout_s}s. "
+        f"Last payload={json.dumps(last_payload, ensure_ascii=True)}"
+    )
+
+
 def check_live_llm_sanity() -> None:
     llm_base, vlm_base, _configured_llm_model = _resolve_llm_vlm_targets_from_config()
     llm_base = _ensure_v3_base(llm_base)
     vlm_base = _ensure_v3_base(vlm_base)
 
     # Basic health endpoints.
-    llm_models = _http_get_json(f"{llm_base}/models")
-    vlm_models = _http_get_json(f"{vlm_base}/models")
+    llm_models = _wait_for_models_payload(llm_base, "LLM")
+    vlm_models = _wait_for_models_payload(vlm_base, "VLM")
     _assert(
         isinstance(llm_models.get("data"), list),
         "LLM /models endpoint did not return expected payload.",
