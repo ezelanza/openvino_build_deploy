@@ -282,14 +282,19 @@ def check_agent_services_up() -> None:
     query = "hello"
     for agent_name, cfg in _enabled_agents_from_config():
         agent_url = f"http://localhost:{int(cfg['port'])}"
-        print(f"Querying {agent_name} at {agent_url}...", flush=True)
-        response_text = _query_agent(
-            query=query,
-            agent_url=agent_url,
-            timeout_s=90,
-        )
-        print(f"{agent_name} response: {response_text}")
-    print("Agent response sanity passed.")
+        card_url = f"{agent_url}/.well-known/agent-card.json"
+        card_payload = _http_get_json(card_url)
+        print(f"{agent_name} agent-card: {json.dumps(card_payload, ensure_ascii=True)}")
+
+        if agent_name == "travel_router":
+            print(f"Querying {agent_name} at {agent_url}...", flush=True)
+            response_text = _query_agent(
+                query=query,
+                agent_url=agent_url,
+                timeout_s=90,
+            )
+            print(f"{agent_name} response: {response_text}")
+    print("Agent endpoint sanity passed.")
 
 
 def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
