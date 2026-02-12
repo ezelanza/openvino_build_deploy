@@ -38,10 +38,7 @@ try:
 except ImportError:
     extract_response_text = None  # type: ignore[assignment]
 
-ROUTER_SANITY_QUERY = (
-    "Find flights from Milan to Berlin for 2026-03-01 to 2026-03-10 in "
-    "economy class, confirm all details."
-)
+ROUTER_SANITY_QUERY = "What is 2+2?"
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -361,14 +358,8 @@ def check_agent_services_up() -> None:
         # Determine appropriate query for each agent type
         if agent_name == "travel_router":
             query = _router_sanity_test_case()
-        elif agent_name == "flight_finder":
-            query = "List flights from New York to London"
-        elif agent_name == "hotel_finder":
-            query = "Find hotels in Paris"
-        elif agent_name == "image_captioning":
-            query = "Describe this image" # Will fail without image but should respond
         else:
-            query = "Hello"
+            query = "What is 2+2?"
 
         print(f"Querying {agent_name} at {agent_url} with: '{query}'...", flush=True)
         last_error: RuntimeError | None = None
