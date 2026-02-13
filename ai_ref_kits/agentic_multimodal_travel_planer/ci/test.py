@@ -351,11 +351,35 @@ def check_mcp_services_up() -> None:
     print(f"MCP ports are up: {ports}")
 
 
+def _verify_ovms_reachable(timeout_s: int = 15) -> None:
+    """Verify OVMS LLM is still responding. Agents depend on it; if the container
+    crashed or is hung, we fail fast with a clear error instead of long timeouts.
+    """
+    try:
+        llm_base, _vlm_base, _model = _resolve_llm_vlm_targets_from_config()
+        llm_base = _ensure_v3_base(llm_base)
+        models_url = f"{llm_base.rstrip('/')}/models"
+        _http_get_json(models_url, timeout=timeout_s)
+    except Exception as exc:
+        raise RuntimeError(
+            "OVMS (LLM) is not responding; the container may have crashed or be hung. "
+            "Check 'docker ps' and 'docker logs ovms-llm'. "
+            f"Error: {exc}"
+        ) from exc
+
+
 def check_agent_services_up() -> None:
     ports = _agent_ports_from_config()
     _assert(ports, "No enabled agent ports found in agents_config.yaml")
     _wait_for_ports(ports, timeout_s=120)
     print(f"Agent ports are up: {ports}")
+
+    # Fail fast if OVMS has crashed (agents depend on it)
+    if not os.environ.get("SKIP_OVMS_HEALTH_CHECK"):
+        ovms_timeout = _int_env("OVMS_HEALTH_CHECK_TIMEOUT_SECONDS", 15)
+        print("Checking OVMS (LLM) is reachable...", flush=True)
+        _verify_ovms_reachable(timeout_s=ovms_timeout)
+        print("OVMS reachable.", flush=True)
 
     # Brief warm-up so agents are fully ready (CI can be slow to serve first request)
     warmup_s = _int_env("AGENT_WARMUP_SECONDS", 10)
