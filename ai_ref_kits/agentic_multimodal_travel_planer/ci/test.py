@@ -357,12 +357,19 @@ def check_agent_services_up() -> None:
     _wait_for_ports(ports, timeout_s=120)
     print(f"Agent ports are up: {ports}")
 
+    # Brief warm-up so agents are fully ready (CI can be slow to serve first request)
+    warmup_s = _int_env("AGENT_WARMUP_SECONDS", 10)
+    if warmup_s > 0:
+        print(f"Warming up agents for {warmup_s}s...", flush=True)
+        time.sleep(warmup_s)
+
     # Query all agents to verify they are up and responsive
     # Specialized agents (flight_finder, hotel_finder, image_captioning) expect specific tasks
     # travel_router expects a general query or handoff result
     
     query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 120)
-    query_retries = _int_env("AGENT_QUERY_RETRIES", 2)
+    query_retries = _int_env("AGENT_QUERY_RETRIES", 3)
+    retry_sleep_s = _int_env("AGENT_QUERY_RETRY_SLEEP_SECONDS", 5)
 
     for agent_name, cfg in _enabled_agents_from_config():
         agent_port = int(cfg["port"])
@@ -393,7 +400,7 @@ def check_agent_services_up() -> None:
                     flush=True,
                 )
                 if attempt < query_retries:
-                    time.sleep(2)
+                    time.sleep(retry_sleep_s)
         if not response_text or response_text == "[No response]":
             reason = str(last_error) if last_error else "no response from agent (timeout or no events)"
             raise RuntimeError(
@@ -489,6 +496,7 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
             return_when=asyncio.FIRST_COMPLETED,
             timeout=timeout_s,
         )
+        timed_out = len(done) == 0
 
         if ready_task in done:
             text = "".join(text_chunks).strip()
@@ -519,6 +527,11 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
         for task in pending:
             task.cancel()
 
+        if timed_out:
+            raise RuntimeError(
+                f"Timed out after {timeout_s}s waiting for agent response from "
+                f"{agent_url}"
+            )
         return "[No response]"
 
     try:
