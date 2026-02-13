@@ -78,6 +78,11 @@ jobs:
           python start_agents.py
       - name: Check agents
         shell: bash
+        env:
+          AGENT_WARMUP_SECONDS: 15
+          AGENT_QUERY_TIMEOUT_SECONDS: 180
+          AGENT_QUERY_RETRIES: 4
+          AGENT_QUERY_RETRY_SLEEP_SECONDS: 8
         run: |
           cd ai_ref_kits/agentic_multimodal_travel_planer
           python ci/test.py --check-agents
