@@ -9,8 +9,8 @@ Checks covered:
 
 from __future__ import annotations
 
-import asyncio
 import argparse
+import asyncio
 import json
 import os
 import socket
@@ -21,9 +21,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from openai import OpenAI
 import yaml
+from openai import OpenAI
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+AGENTS_CONFIG_PATH = PROJECT_ROOT / "config" / "agents_config.yaml"
 sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
@@ -50,7 +52,6 @@ try:
 except ImportError:
     StreamingCitationParser = None  # type: ignore[assignment]
     extract_response_text = None  # type: ignore[assignment]
-
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -123,7 +124,7 @@ def _force_localhost(url: str) -> str:
 
 
 def _resolve_llm_vlm_targets_from_config() -> tuple[str, str, str]:
-    agents_cfg = _load_yaml(PROJECT_ROOT / "config" / "agents_config.yaml")
+    agents_cfg = _load_yaml(AGENTS_CONFIG_PATH)
     mcp_cfg = _load_yaml(PROJECT_ROOT / "config" / "mcp_config.yaml")
 
     travel_router = agents_cfg.get("travel_router", {})
@@ -151,10 +152,10 @@ def _resolve_llm_vlm_targets_from_config() -> tuple[str, str, str]:
 
 def _pick_model_from_models_endpoint(models_payload: dict) -> str:
     data = models_payload.get("data")
-    if isinstance(data, list) and data:
-        first = data[0]
-        if isinstance(first, dict) and first.get("id"):
-            return str(first["id"])
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        model_id = data[0].get("id")
+        if model_id:
+            return str(model_id)
     raise RuntimeError(
         "No model id found in /v3/models response. "
         f"Payload={json.dumps(models_payload, ensure_ascii=True)}"
@@ -177,7 +178,7 @@ def _wait_for_models_payload(
         payload = _http_get_json(f"{base_url}/models")
         last_payload = payload if isinstance(payload, dict) else {}
         data = last_payload.get("data")
-        if isinstance(data, list) and len(data) > 0:
+        if isinstance(data, list) and data:
             return last_payload
         time.sleep(interval_s)
 
@@ -205,17 +206,8 @@ def check_live_llm_sanity() -> None:
     llm_base = _ensure_v3_base(llm_base)
     vlm_base = _ensure_v3_base(vlm_base)
 
-    # Basic health endpoints.
     llm_models = _wait_for_models_payload(llm_base, "LLM")
     vlm_models = _wait_for_models_payload(vlm_base, "VLM")
-    _assert(
-        isinstance(llm_models.get("data"), list),
-        "LLM /models endpoint did not return expected payload.",
-    )
-    _assert(
-        isinstance(vlm_models.get("data"), list),
-        "VLM /models endpoint did not return expected payload.",
-    )
     llm_model = _pick_model_from_models_endpoint(llm_models)
     vlm_model = _pick_model_from_models_endpoint(vlm_models)
 
@@ -238,12 +230,9 @@ def check_live_llm_sanity() -> None:
             f"OpenAI SDK chat completion failed for LLM {llm_base}: {exc}"
         ) from exc
 
-    print(f"LLM chat completion response: {_serialize_completion_for_logs(llm_completion)}")
-    llm_choices = llm_completion.choices if hasattr(llm_completion, "choices") else []
-    _assert(
-        isinstance(llm_choices, list) and len(llm_choices) > 0,
-        "No LLM choices returned.",
-    )
+    print(f"LLM response: {_serialize_completion_for_logs(llm_completion)}")
+    llm_choices = getattr(llm_completion, "choices", [])
+    _assert(llm_choices, "No LLM choices returned.")
 
     # Test VLM chat completion
     print(f"Testing VLM chat completion at {vlm_base}...")
@@ -264,12 +253,9 @@ def check_live_llm_sanity() -> None:
             f"OpenAI SDK chat completion failed for VLM {vlm_base}: {exc}"
         ) from exc
 
-    print(f"VLM chat completion response: {_serialize_completion_for_logs(vlm_completion)}")
-    vlm_choices = vlm_completion.choices if hasattr(vlm_completion, "choices") else []
-    _assert(
-        isinstance(vlm_choices, list) and len(vlm_choices) > 0,
-        "No VLM choices returned.",
-    )
+    print(f"VLM response: {_serialize_completion_for_logs(vlm_completion)}")
+    vlm_choices = getattr(vlm_completion, "choices", [])
+    _assert(vlm_choices, "No VLM choices returned.")
     print("Live LLM and VLM sanity checks passed.")
 
 
@@ -296,8 +282,7 @@ def _mcp_ports_from_config() -> list[int]:
 
 
 def _agent_ports_from_config() -> list[int]:
-    agents_cfg_path = PROJECT_ROOT / "config" / "agents_config.yaml"
-    agents_cfg = _load_yaml(agents_cfg_path)
+    agents_cfg = _load_yaml(AGENTS_CONFIG_PATH)
     return [
         int(section.get("port"))
         for section in agents_cfg.values()
@@ -310,7 +295,7 @@ def _agent_ports_from_config() -> list[int]:
 
 
 def _enabled_agents_from_config() -> list[tuple[str, dict]]:
-    agents_cfg = _load_yaml(PROJECT_ROOT / "config" / "agents_config.yaml")
+    agents_cfg = _load_yaml(AGENTS_CONFIG_PATH)
     return [
         (name, cfg)
         for name, cfg in agents_cfg.items()
@@ -320,15 +305,6 @@ def _enabled_agents_from_config() -> list[tuple[str, dict]]:
             and cfg.get("port")
         )
     ]
-
-
-def _router_sanity_test_case() -> str:
-    agents_cfg = _load_yaml(PROJECT_ROOT / "config" / "agents_config.yaml")
-    router_cfg = agents_cfg.get("travel_router", {})
-    sanity_cfg = router_cfg.get("sanity", {})
-    if isinstance(sanity_cfg, dict) and sanity_cfg.get("query"):
-        return str(sanity_cfg["query"])
-    return "What is 2+2?"
 
 
 def _agent_url_from_card(card_payload: dict) -> str:
@@ -352,19 +328,15 @@ def check_mcp_services_up() -> None:
 
 
 def _verify_ovms_reachable(timeout_s: int = 15) -> None:
-    """Verify OVMS LLM is still responding. Agents depend on it; if the container
-    crashed or is hung, we fail fast with a clear error instead of long timeouts.
-    """
+    """Verify OVMS LLM is still responding (fail fast if container crashed)."""
     try:
-        llm_base, _vlm_base, _model = _resolve_llm_vlm_targets_from_config()
+        llm_base, _, _ = _resolve_llm_vlm_targets_from_config()
         llm_base = _ensure_v3_base(llm_base)
-        models_url = f"{llm_base.rstrip('/')}/models"
-        _http_get_json(models_url, timeout=timeout_s)
+        _http_get_json(f"{llm_base}/models", timeout=timeout_s)
     except Exception as exc:
         raise RuntimeError(
-            "OVMS (LLM) is not responding; the container may have crashed or be hung. "
-            "Check 'docker ps' and 'docker logs ovms-llm'. "
-            f"Error: {exc}"
+            "OVMS (LLM) not responding; container may have crashed. "
+            f"Check 'docker logs ovms-llm'. Error: {exc}"
         ) from exc
 
 
@@ -387,10 +359,6 @@ def check_agent_services_up() -> None:
         print(f"Warming up agents for {warmup_s}s...", flush=True)
         time.sleep(warmup_s)
 
-    # Query all agents to verify they are up and responsive
-    # Specialized agents (flight_finder, hotel_finder, image_captioning) expect specific tasks
-    # travel_router expects a general query or handoff result
-    
     query_timeout_s = _int_env("AGENT_QUERY_TIMEOUT_SECONDS", 120)
     query_retries = _int_env("AGENT_QUERY_RETRIES", 3)
     retry_sleep_s = _int_env("AGENT_QUERY_RETRY_SLEEP_SECONDS", 5)
@@ -409,6 +377,7 @@ def check_agent_services_up() -> None:
         print(f"Querying {agent_name} at {agent_url} with: '{query}'...", flush=True)
         last_error: RuntimeError | None = None
         response_text = ""
+        t0 = time.monotonic()
         for attempt in range(1, query_retries + 1):
             try:
                 response_text = _query_agent(
@@ -419,36 +388,52 @@ def check_agent_services_up() -> None:
                 break
             except RuntimeError as exc:
                 last_error = exc
+                elapsed = time.monotonic() - t0
                 print(
-                    f"{agent_name} query attempt {attempt}/{query_retries} failed: {exc}",
+                    f"{agent_name} query attempt {attempt}/{query_retries} failed after {elapsed:.1f}s: {exc}",
                     flush=True,
                 )
                 if attempt < query_retries:
                     time.sleep(retry_sleep_s)
         if not response_text or response_text == "[No response]":
-            reason = str(last_error) if last_error else "no response from agent (timeout or no events)"
+            reason = (
+                str(last_error) if last_error
+                else "no response from agent (timeout or no events)"
+            )
             raise RuntimeError(
                 f"{agent_name} query failed after {query_retries} attempts: {reason}"
             ) from last_error
-        print(f"{agent_name} response: {response_text}")
-        
+        elapsed = time.monotonic() - t0
+        print(f"{agent_name} response ({elapsed:.1f}s): {response_text}")
     print("Agent endpoint sanity passed.")
 
 
+def _timeout_msg(agent_url: str, timeout_s: int) -> str:
+    return f"Timed out after {timeout_s}s waiting for agent response from {agent_url}"
+
+
+def _append_chunk(text_chunks: list[str], parser: object, delta: object) -> None:
+    """Append parsed or raw delta to text_chunks."""
+    if parser:
+        clean_text, _ = parser.process_chunk(delta)
+        if clean_text:
+            text_chunks.append(clean_text)
+            return
+    text_chunks.append(delta if isinstance(delta, str) else str(delta))
+
+
 def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
-    """Send a message to an agent and return response text; matches working script flow."""
+    """Send a message to an agent and return response text."""
     _assert(
         A2AAgent is not None and UnconstrainedMemory is not None,
         "Missing beeai_framework dependency for agent queries.",
     )
-
-    response_ready: asyncio.Event | None = None
     text_chunks: list[str] = []
     last_text = ""
     last_processed_length = 0
 
     async def _run_query() -> str:
-        nonlocal last_processed_length, last_text, response_ready
+        nonlocal last_processed_length, last_text
         if load_dotenv:
             load_dotenv()
         response_ready = asyncio.Event()
@@ -457,7 +442,6 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
 
         async def capture_events(data: object, event: object) -> None:
             nonlocal last_processed_length, last_text
-
             event_name = getattr(event, "name", "unknown")
 
             if (
@@ -466,41 +450,26 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
                 and isinstance(data, RequirementAgentFinalAnswerEvent)
                 and getattr(data, "delta", None)
             ):
-                delta = data.delta
-                if parser:
-                    clean_text, _ = parser.process_chunk(delta)
-                    if clean_text:
-                        text_chunks.append(clean_text)
-                else:
-                    text_chunks.append(str(delta))
+                _append_chunk(text_chunks, parser, data.delta)
                 response_ready.set()
 
             if A2AAgentUpdateEvent and isinstance(data, A2AAgentUpdateEvent):
                 value = getattr(data, "value", None)
                 if isinstance(value, tuple) and len(value) >= 2:
-                    task, _ = value
+                    task = value[0]
                     current_text = ""
-                    if hasattr(task, "history") and task.history:
+                    if getattr(task, "history", None):
                         last_msg = task.history[-1]
-                        if hasattr(last_msg, "parts") and last_msg.parts:
+                        if getattr(last_msg, "parts", None):
                             for part in last_msg.parts:
-                                if (
-                                    hasattr(part, "root")
-                                    and hasattr(part.root, "text")
-                                ):
-                                    current_text += part.root.text or ""
-
+                                root = getattr(part, "root", None)
+                                if root is not None and hasattr(root, "text"):
+                                    current_text += root.text or ""
                     if len(current_text) > last_processed_length:
                         delta = current_text[last_processed_length:]
                         last_processed_length = len(current_text)
                         last_text = current_text
-
-                        if parser:
-                            clean_text, _ = parser.process_chunk(delta)
-                            if clean_text:
-                                text_chunks.append(clean_text)
-                        else:
-                            text_chunks.append(delta)
+                        _append_chunk(text_chunks, parser, delta)
                         response_ready.set()
 
         run_handle = (
@@ -552,19 +521,13 @@ def _query_agent(query: str, agent_url: str, timeout_s: int = 60) -> str:
             task.cancel()
 
         if timed_out:
-            raise RuntimeError(
-                f"Timed out after {timeout_s}s waiting for agent response from "
-                f"{agent_url}"
-            )
+            raise RuntimeError(_timeout_msg(agent_url, timeout_s))
         return "[No response]"
 
     try:
         return asyncio.run(_run_query())
     except asyncio.TimeoutError as exc:
-        raise RuntimeError(
-            f"Timed out after {timeout_s}s waiting for agent response from "
-            f"{agent_url}"
-        ) from exc
+        raise RuntimeError(_timeout_msg(agent_url, timeout_s)) from exc
     except Exception as exc:
         raise RuntimeError(
             f"Agent query failed for {agent_url}: {exc}"
